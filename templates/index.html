@@ -1,30 +1,151 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-Hant">
 <head>
-    <title>台股分析平台</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股 AI 分析系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: "Microsoft JhengHei", "PingFang TC", sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0ea5e9 100%);
+            min-height: 100vh;
+        }
+        .hero-card {
+            background: rgba(255,255,255,0.96);
+            border-radius: 24px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+        }
+        .search-input {
+            height: 56px;
+            font-size: 1.2rem;
+            border-radius: 14px 0 0 14px !important;
+        }
+        .search-btn {
+            height: 56px;
+            border-radius: 0 14px 14px 0 !important;
+            font-size: 1.1rem;
+            font-weight: 700;
+            padding: 0 28px;
+        }
+        .stock-chip {
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #fff;
+            text-align: left;
+            width: 100%;
+        }
+        .stock-chip:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            border-color: #3b82f6;
+        }
+        .loading-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(15,23,42,0.75);
+            z-index: 9999;
+            align-items: center; justify-content: center;
+            flex-direction: column; color: #fff;
+        }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="card shadow-lg">
-            <div class="card-body">
-                <h1 class="card-title text-center text-primary mb-4">📈 台股技術分析平台</h1>
-                <form method="post">
-                    <div class="mb-3">
-                        <label for="symbol" class="form-label">請輸入台股代碼（如：2330）</label>
-                        <input type="text" name="symbol" class="form-control" placeholder="如：2330（台積電）" required>
-                    </div>
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-success">立即分析</button>
-                    </div>
-                </form>
+<body>
+<div class="container py-4 py-md-5">
+    <div class="text-center text-white mb-4">
+        <div style="font-size: 3rem;">📈</div>
+        <h1 class="fw-bold display-6">台股 AI 分析系統</h1>
+        <p class="opacity-75">輸入 4 碼代碼，AI 幫你看走勢、算指標、預測明天</p>
+        <span class="badge bg-warning text-dark">LSTM 模型</span>
+        <span class="badge bg-light text-dark">即時股價</span>
+        <span class="badge bg-light text-dark">技術指標</span>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-12 col-md-10 col-lg-8">
+            <div class="hero-card p-4 p-md-5">
+
                 {% if error %}
-                    <div class="alert alert-danger mt-3" role="alert">
-                        錯誤：{{ error }}
-                    </div>
+                <div class="alert alert-danger rounded-3">{{ error }}</div>
                 {% endif %}
+
+                <form method="POST" id="search-form">
+                    <label class="form-label fw-bold">輸入台股代碼</label>
+                    <div class="input-group">
+                        <input type="text" name="symbol" class="form-control search-input" placeholder="例如：2330 台積電" maxlength="4" inputmode="numeric" required>
+                        <button class="btn btn-primary search-btn" type="submit">🔍 分析</button>
+                    </div>
+                    <div class="form-text">只接受 4 碼數字，例如 2330、2317、2454</div>
+                </form>
+
+                <!-- 熱門股 -->
+                <div class="mt-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="fw-bold mb-0">🔥 熱門股票</h6>
+                        <span class="text-muted small">點一下直接分析</span>
+                    </div>
+                    <div class="row g-2">
+                        {% for s in popular %}
+                        <div class="col-6 col-md-4">
+                            <button class="stock-chip" onclick="quickSearch('{{ s.code }}')">
+                                <div class="fw-bold">{{ s.code }} {{ s.name }}</div>
+                                <div class="small text-muted">{{ s.tag }}</div>
+                            </button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- 歷史 -->
+                {% if history %}
+                <div class="mt-4">
+                    <h6 class="fw-bold">🕘 最近查詢</h6>
+                    <div class="d-flex gap-2 flex-wrap">
+                        {% for h in history %}
+                        <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="quickSearch('{{ h.code }}')">{{ h.code }} {{ h.name }}</button>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="mt-4 p-3 bg-light rounded-3 small text-muted">
+                    <b>📊 我們會幫你看什麼？</b><br>
+                    • 目前價格、近一週報酬率<br>
+                    • RSI、MACD、MA20 技術指標<br>
+                    • LSTM 模型回測誤差 MAPE<br>
+                    • 明天預測價格 + 走勢圖<br>
+                    <span class="text-danger">提醒：預測僅供參考，不構成投資建議。</span>
+                </div>
+
             </div>
+            <p class="text-center text-white-50 small mt-3">資料來源：Yahoo Finance · 模型：LSTM · 僅供學習研究使用</p>
         </div>
     </div>
+</div>
+
+<!-- 載入動畫 -->
+<div class="loading-overlay" id="loading">
+    <div class="spinner-border text-light" style="width: 3rem; height: 3rem;" role="status"></div>
+    <h4 class="mt-3">正在分析中...</h4>
+    <p class="opacity-75">第一次查詢會訓練模型，約需 20-40 秒，請稍等</p>
+</div>
+
+<script>
+function quickSearch(code){
+    const input = document.querySelector('input[name="symbol"]');
+    input.value = code;
+    document.getElementById('search-form').submit();
+}
+document.getElementById('search-form').addEventListener('submit', function(){
+    document.getElementById('loading').style.display = 'flex';
+});
+// 只讓使用者打數字
+document.querySelector('input[name="symbol"]').addEventListener('input', function(){
+    this.value = this.value.replace(/[^0-9]/g, '').slice(0,4);
+});
+</script>
 </body>
 </html>

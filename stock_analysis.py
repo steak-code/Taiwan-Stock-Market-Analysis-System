@@ -119,7 +119,18 @@ def analyze_stock(symbol):
 🧪 模型回測誤差（MAPE）：{mape:.2%}"""
     forecast_text = f"🔮 明天預測價格：{predicted_prices[0]:.2f} 元"
 
+    # 多回傳 extra，給前端顯示 RSI、MACD、MAPE
+    extra = {
+        'company_name': company_name,
+        'current_price': current_price,
+        'recent_return': float(recent_return),
+        'mape': float(mape),
+        'rsi': float(df_valid['RSI'].iloc[-1]),
+        'macd': float(df_valid['MACD'].iloc[-1]),
+        'ma20': float(df_valid['MA20'].iloc[-1]),
+        'predicted_price': float(predicted_prices[0]),
+    }
     # 畫兩張圖，主圖 + 回測圖，都用獨立檔名
     chart_path, backtest_path = _draw_charts(symbol, df_valid, predicted_prices[0], y_true, y_pred)
 
-    return chart_path, backtest_path, recent_text, forecast_text
+    return chart_path, backtest_path, recent_text, forecast_text, extra
