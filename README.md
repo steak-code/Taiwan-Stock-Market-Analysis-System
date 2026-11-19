@@ -80,7 +80,7 @@ Dense (1) -> 輸出明天漲跌幅
 - **訓練 / 測試切分**：85% 訓練，15% 測試
 - **固定種子**：`random.seed(42)` + `np.random.seed(42)` + `tf.random.set_seed(42)`，讓每次訓練結果都一樣，不會一下 28%，一下 42%
 
-### 特徵工程
+## 🔧 特徵工程
 
 | 特徵 | 來源 | 用途 |
 | :--- | :--- | :--- |
@@ -95,7 +95,7 @@ Dense (1) -> 輸出明天漲跌幅
 | `BB_Width` | 布林帶 | 盤整還是要噴 |
 | `Target` | `Close.shift(-1) / Close - 1` | 明天漲跌幅（預測目標） |
 
-### 防 Inf 處理
+## 🛡️ 防 Inf 處理
 
 `pct_change()` 在成交量為 0 時會產生 `inf`，導致 `MinMaxScaler` 報錯：
 
@@ -268,7 +268,7 @@ stock_project/
 ### 1. 下載專案
 
 ```bash
-git clone [https://github.com/你的帳號/你的專案名.git](https://github.com/你的帳號/你的專案名.git)
+git clone https://github.com/你的帳號/你的專案名.git
 cd 你的專案名
 ```
 
@@ -299,7 +299,7 @@ python app.py
 打開瀏覽器，輸入：
 
 ```text
-[http://127.0.0.1:5000](http://127.0.0.1:5000)
+http://127.0.0.1:5000
 ```
 
 輸入 `2330`，點「分析」，第一次會訓練模型，約需 20-40 秒，請稍等。
