@@ -1,4 +1,5 @@
 import os
+import numpy as np
 from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
@@ -81,6 +82,9 @@ def analyze_stock(symbol):
     df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
     df['MACD'] = ta.trend.MACD(df['Close']).macd()
     df['Returns'] = df['Close'].pct_change()
+     # ★ 加這兩行，把 inf 清掉
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.dropna(subset=['MA20', 'RSI', 'MACD'])
     df_valid = df.dropna(subset=['MA20', 'RSI', 'MACD'])
     if df_valid.empty:
         raise ValueError("資料不足，無法計算技術指標")
@@ -88,7 +92,7 @@ def analyze_stock(symbol):
     recent_return = float(df_valid['Returns'].tail(7).mean())
     current_price = float(df['Close'].iloc[-1])
 
-    predicted_prices, mape, y_true, y_pred = predict_stock_price(df_valid, symbol)
+    predicted_prices, mape, y_true, y_pred, model_info  = predict_stock_price(df_valid, symbol)
 
     company_name = _get_company_name(symbol, stock)
 
@@ -109,6 +113,11 @@ def analyze_stock(symbol):
         'macd': float(df_valid['MACD'].iloc[-1]),
         'ma20': float(df_valid['MA20'].iloc[-1]),
         'predicted_price': float(predicted_prices[0]),
+        # 新增的
+        'direction_acc': model_info.get('direction_acc', 0),
+        'naive_mape': model_info.get('naive_mape', 0),
+        'predicted_return': model_info.get('predicted_return', 0),
+        'is_better_than_naive': model_info.get('is_better_than_naive', False),
     }
     print(f"[DEBUG] extra = {extra}")
 
