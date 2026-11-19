@@ -12,6 +12,9 @@ from tensorflow.keras.callbacks import EarlyStopping
 MODEL_DIR = 'models'
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+# ★ 關鍵：模型版本，只要改模型架構，就改這個數字，舊模型就會自動作廢
+MODEL_VERSION = "v2_return"  # v1 是預測價格，v2 是預測漲跌幅
+
 _MODEL_CACHE = {}
 _SCALER_CACHE = {}
 
@@ -134,12 +137,25 @@ def predict_stock_price(df, symbol):
 
     model_path = os.path.join(MODEL_DIR, f"{symbol}.h5")
     scaler_path = os.path.join(MODEL_DIR, f"{symbol}_scaler.pkl")
+    version_path = os.path.join(MODEL_DIR, f"{symbol}_version.txt")
 
-    # 載入或訓練
-    if symbol in _MODEL_CACHE:
+    # ★ 檢查版本，如果版本不對，或是沒有版本檔，就是舊模型，直接刪掉重訓
+    need_retrain = True
+    if os.path.exists(model_path) and os.path.exists(scaler_path) and os.path.exists(version_path):
+        try:
+            with open(version_path, 'r') as f:
+                saved_version = f.read().strip()
+            if saved_version == MODEL_VERSION:
+                need_retrain = False
+            else:
+                print(f"[WARN] {symbol} 模型版本不對 {saved_version} != {MODEL_VERSION}，自動重訓")
+        except:
+            need_retrain = True
+
+    if symbol in _MODEL_CACHE and not need_retrain:
         model = _MODEL_CACHE[symbol]
         print(f"[INFO] 從快取使用 {symbol} 模型")
-    elif os.path.exists(model_path) and os.path.exists(scaler_path):
+    elif not need_retrain:
         print(f"[INFO] 從硬碟載入 {symbol} 模型")
         model = load_model(model_path)
         scaler = joblib.load(scaler_path)
@@ -148,26 +164,13 @@ def predict_stock_price(df, symbol):
     else:
         print(f"[INFO] 訓練新的 {symbol} 模型...")
         model = _build_model((X_train.shape[1], X_train.shape[2]))
-
-        # Early Stopping：如果 10 次都沒有進步，就停下來，不要硬練到 30 次
-        early_stop = EarlyStopping(
-            monitor='val_loss',
-            patience=10,
-            restore_best_weights=True,
-            verbose=0
-        )
-
-        # 訓練，validation_split=0.1，留 10% 來驗證
-        model.fit(
-            X_train, y_train,
-            epochs=100,  # 寫 100 沒關係，Early Stopping 會自己停
-            batch_size=32,
-            validation_split=0.1,
-            callbacks=[early_stop],
-            verbose=0
-        )
+        early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=0)
+        model.fit(X_train, y_train, epochs=100, batch_size=32, validation_split=0.1, callbacks=[early_stop], verbose=0)
         model.save(model_path)
         joblib.dump(scaler, scaler_path)
+        # ★ 存版本檔
+        with open(version_path, 'w') as f:
+            f.write(MODEL_VERSION)
         _MODEL_CACHE[symbol] = model
         _SCALER_CACHE[symbol] = scaler
         print(f"[INFO] {symbol} 模型已儲存")
@@ -207,13 +210,27 @@ def predict_stock_price(df, symbol):
 
     print(f"[INFO] {symbol} 模型 MAPE: {mape:.2%}, 天真 MAPE: {naive_mape:.2%}, 方向準確率: {direction_acc:.2%}")
 
-    # 明天預測：用最近 60 天
+        # 明天預測：用最近 60 天
     last_60 = scaler.transform(df[feature_cols].values[-SEQ_LEN:])
     last_input = last_60.reshape(1, SEQ_LEN, len(feature_cols))
     predicted_return = float(model.predict(last_input, verbose=0)[0][0])
+
+    # ★ 第一道保險：漲跌幅限制在 -10% 到 +10%
+    # 如果模型輸出是 0.147，或是 98.88 這種離譜的數字，直接砍掉
+    # 如果它輸出的是價格 (例如 98)，那它一定 > 0.1，就會被砍成 0.1
+    # 這樣就不會再出現 14.7% 這種事
+    if abs(predicted_return) > 1.0:
+        print(f"[WARN] {symbol} 模型輸出異常 {predicted_return}，可能是舊模型，已強制歸零")
+        predicted_return = 0.0
+
     predicted_return = float(np.clip(predicted_return, -0.1, 0.1))
     last_price = float(df['Close'].iloc[-1])
+
+    # ★ 第二道保險：價格也砍一次，保證在漲跌停內
     predicted_close = last_price * (1 + predicted_return)
+    predicted_close = float(np.clip(predicted_close, last_price * 0.9, last_price * 1.1))
+
+    print(f"[INFO] {symbol} 目前 {last_price:.2f}，預測漲跌幅 {predicted_return:.2%}，預測價 {predicted_close:.2f}，漲停 {last_price*1.1:.2f}，跌停 {last_price*0.9:.2f}")
 
     # 回傳：預測價格、MAPE、實際、預測、還有方向準確率和天真 MAPE
     return [predicted_close], mape, y_true_price_aligned, y_pred_price, {

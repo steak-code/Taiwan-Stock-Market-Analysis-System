@@ -82,9 +82,7 @@ def analyze_stock(symbol):
     df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
     df['MACD'] = ta.trend.MACD(df['Close']).macd()
     df['Returns'] = df['Close'].pct_change()
-     # ★ 加這兩行，把 inf 清掉
     df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.dropna(subset=['MA20', 'RSI', 'MACD'])
     df_valid = df.dropna(subset=['MA20', 'RSI', 'MACD'])
     if df_valid.empty:
         raise ValueError("資料不足，無法計算技術指標")
@@ -92,7 +90,17 @@ def analyze_stock(symbol):
     recent_return = float(df_valid['Returns'].tail(7).mean())
     current_price = float(df['Close'].iloc[-1])
 
-    predicted_prices, mape, y_true, y_pred, model_info  = predict_stock_price(df_valid, symbol)
+    predicted_prices, mape, y_true, y_pred, model_info = predict_stock_price(df_valid, symbol)
+
+    # ★ 第三道保險：台股漲跌停 10%，絕對不能超過
+    raw_predicted = float(predicted_prices[0])
+    limit_up = current_price * 1.1
+    limit_down = current_price * 0.9
+
+    if raw_predicted > limit_up or raw_predicted < limit_down:
+        print(f"[WARN] {symbol} 預測價 {raw_predicted:.2f} 超出漲跌停 [{limit_down:.2f}, {limit_up:.2f}]，已強制修正為 {max(min(raw_predicted, limit_up), limit_down):.2f}")
+
+    predicted_price = float(np.clip(raw_predicted, limit_down, limit_up))
 
     company_name = _get_company_name(symbol, stock)
 
@@ -101,9 +109,8 @@ def analyze_stock(symbol):
 📈 近一週平均報酬率：{recent_return:.2%}
 🧪 模型回測誤差（MAPE）：{float(mape):.2%}"""
 
-    forecast_text = f"🔮 明天預測價格：{float(predicted_prices[0]):.2f} 元"
+    forecast_text = f"🔮 明天預測價格：{predicted_price:.2f} 元"
 
-    # ★ 這裡就是關鍵，一定要回傳 extra，不然 result.html 拿不到 RSI
     extra = {
         'company_name': company_name,
         'current_price': current_price,
@@ -112,15 +119,15 @@ def analyze_stock(symbol):
         'rsi': float(df_valid['RSI'].iloc[-1]),
         'macd': float(df_valid['MACD'].iloc[-1]),
         'ma20': float(df_valid['MA20'].iloc[-1]),
-        'predicted_price': float(predicted_prices[0]),
-        # 新增的
+        'predicted_price': predicted_price,  # ★ 用修正過的，不是 raw 的
+        'limit_up': limit_up,   # ★ 新增，給前端顯示漲停價
+        'limit_down': limit_down,
         'direction_acc': model_info.get('direction_acc', 0),
         'naive_mape': model_info.get('naive_mape', 0),
         'predicted_return': model_info.get('predicted_return', 0),
         'is_better_than_naive': model_info.get('is_better_than_naive', False),
     }
-    print(f"[DEBUG] extra = {extra}")
 
-    chart_path, backtest_path = _draw_charts(symbol, df_valid, float(predicted_prices[0]), y_true, y_pred)
+    chart_path, backtest_path = _draw_charts(symbol, df_valid, predicted_price, y_true, y_pred)
 
     return chart_path, backtest_path, recent_text, forecast_text, extra

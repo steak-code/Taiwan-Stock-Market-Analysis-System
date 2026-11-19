@@ -110,6 +110,13 @@
                     {% if diff >= 0 %}<span class="pill pill-up">▲ 預測漲 {{ "%.2f"|format(diff) }} 元</span>
                     {% else %}<span class="pill pill-down">▼ 預測跌 {{ "%.2f"|format(diff|abs) }} 元</span>{% endif %}
                 {% endif %}
+                <!-- ★ 新增：顯示漲跌停，讓使用者一眼就知道預測合不合理 -->
+                {% if extra and extra.limit_up is not none %}
+                <div class="kpi-sub text-muted mt-2" style="font-size: 0.8rem; line-height: 1.6;">
+                    漲停 {{ "%.2f"|format(extra.limit_up) }} 元<br>
+                    跌停 {{ "%.2f"|format(extra.limit_down) }} 元
+                </div>
+                {% endif %}
                 <div class="kpi-sub text-muted mt-1">{{ forecast_text }}</div>
             </div>
         </div>
