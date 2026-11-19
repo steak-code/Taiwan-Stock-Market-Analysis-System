@@ -42,16 +42,17 @@ def index():
             history = history[:8]
             session['history'] = history
 
-            # 根據 MAPE 判斷準不準
-            mape = extra.get('mape', 0)
-            if mape < 0.03:
-                accuracy_label = "✅ 模型表現不錯"
+            # 以前只看 MAPE
+            # 現在要一起看方向準確率
+            direction_acc = extra.get('direction_acc', 0)
+            if extra.get('is_better_than_naive') and direction_acc > 0.55:
+                accuracy_label = f"✅ 模型比亂猜好，方向準確率 {direction_acc:.0%}"
                 accuracy_color = "success"
-            elif mape < 0.08:
-                accuracy_label = "⚠️ 模型表現普通，參考就好"
+            elif direction_acc > 0.5:
+                accuracy_label = f"⚠️ 模型跟亂猜差不多，方向準確率 {direction_acc:.0%}"
                 accuracy_color = "warning"
             else:
-                accuracy_label = "❌ 模型誤差較大，請小心參考"
+                accuracy_label = f"❌ 模型比亂猜還差，方向準確率 {direction_acc:.0%}"
                 accuracy_color = "danger"
 
             return render_template(
