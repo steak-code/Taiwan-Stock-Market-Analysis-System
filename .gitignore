@@ -1,0 +1,20 @@
+# Python 暫存
+__pycache__/
+*.pyc
+*.pyo
+
+# 虛擬環境，超大，絕對不要推
+venv/
+.env
+.venv/
+
+# 你的金鑰，絕對不要推
+.env
+
+# 每次跑出來的圖，會一直變，不用推
+static/chart.png
+static/backtest.png
+
+# 模型檔如果很大，也不要推
+*.pkl
+*.h5
