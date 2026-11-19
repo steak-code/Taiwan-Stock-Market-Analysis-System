@@ -8,6 +8,13 @@ from sklearn.metrics import mean_absolute_percentage_error
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Dense, LSTM, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
+import random
+import tensorflow as tf
+
+# ★ 固定種子，讓每次訓練結果都一樣，不然每次查都會不一樣
+random.seed(42)
+np.random.seed(42)
+tf.random.set_seed(42)
 
 MODEL_DIR = 'models'
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -40,10 +47,7 @@ def _build_model(input_shape):
     return model
 
 def _add_features(df):
-    """特徵工程：加入防 inf 清理"""
     df = df.copy()
-
-    # 先把 Volume 的 0 換掉，不然 pct_change 會變 inf
     df['Volume'] = df['Volume'].replace(0, np.nan).ffill().fillna(1)
     df['Close'] = df['Close'].replace(0, np.nan).ffill()
 
@@ -55,30 +59,25 @@ def _add_features(df):
     df['MA20'] = df['Close'].rolling(20).mean()
     df['MA60'] = df['Close'].rolling(60).mean()
 
-    # ★ 修法：分母加一個很小的值，不會除以 0
     df['BIAS20'] = (df['Close'] - df['MA20']) / (df['MA20'] + 1e-8)
-
-    # ★ 修法：pct_change 後，限制在 -20% 到 +20%，台股漲跌停是 10%，超過就是髒資料
     df['Daily_Return'] = df['Close'].pct_change().clip(-0.2, 0.2)
-    df['Volume_Change'] = df['Volume'].pct_change().clip(-1.0, 5.0)  # 量最多放大 5 倍
+    df['Volume_Change'] = df['Volume'].pct_change().clip(-1.0, 5.0)
 
     bb = ta.volatility.BollingerBands(df['Close'])
-    # ★ 修法：分母加 1e-8，不會除以 0
     df['BB_Width'] = (bb.bollinger_hband() - bb.bollinger_lband()) / (df['Close'] + 1e-8)
     df['BB_Width'] = df['BB_Width'].clip(0, 1.0)
 
     df['Target'] = df['Close'].shift(-1) / df['Close'] - 1
-    df['Target'] = df['Target'].clip(-0.1, 0.1)  # 台股漲跌停 10%
+    df['Target'] = df['Target'].clip(-0.1, 0.1)
 
-    # ★ 最關鍵：把所有 inf 換成 NaN，再全部刪掉
+    # ★ 關鍵修法：不要 dropna 把最後一天刪掉
+    # 只清 inf，特徵是 NaN 的才刪，但 Target 是 NaN 的要留著，因為今天就是要拿來預測明天
     df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.dropna()
 
-    # 再檢查一次，確保沒有 inf
-    # 如果還有，就把那一行印出來，方便你 debug
-    if np.isinf(df.select_dtypes(include=[np.number]).values).any():
-        print("[ERROR] 還有 inf，清不乾淨")
-        df = df.replace([np.inf, -np.inf], 0)
+    # 只對特徵做 dropna，Target 不管
+    feature_cols_for_drop = ['Close', 'Volume', 'RSI', 'MACD', 'MACD_Signal', 'MA5', 'MA20', 'BIAS20', 'Daily_Return', 'Volume_Change', 'BB_Width']
+    feature_cols_for_drop = [c for c in feature_cols_for_drop if c in df.columns]
+    df = df.dropna(subset=feature_cols_for_drop)
 
     return df
 
@@ -95,51 +94,39 @@ def predict_stock_price(df, symbol):
     if len(df) < SEQ_LEN + 50:
         raise ValueError(f"資料不足，只有 {len(df)} 天，至少需要 {SEQ_LEN + 50} 天")
 
-    # ★ 特徵清單，8 個特徵
-    feature_cols = [
-        'Close', 'Volume',
-        'RSI', 'MACD', 'MACD_Signal',
-        'MA5', 'MA20', 'BIAS20',
-        'Daily_Return', 'Volume_Change', 'BB_Width'
-    ]
-    # 確保都有，不會因為某個指標是 NaN 就掛掉
+    feature_cols = ['Close', 'Volume', 'RSI', 'MACD', 'MACD_Signal', 'MA5', 'MA20', 'BIAS20', 'Daily_Return', 'Volume_Change', 'BB_Width']
     feature_cols = [c for c in feature_cols if c in df.columns]
 
-    # ★ 關鍵修正：切訓練 / 測試，要先切，再算 Scaler
-    # 不然會用未來的資料來算 Scaler，就是偷看未來
-    split_index = int(len(df) * 0.85)  # 85% 訓練，15% 測試，比之前留更多測試
-    train_df = df.iloc[:split_index]
-    test_df = df.iloc[split_index - SEQ_LEN:]  # 測試要多留 60 天，才能做出第一個序列
+    # ★ 關鍵修法：訓練用的 df，要把最後一天 (Target 是 NaN) 拿掉
+    # 預測用的 df，要留著最後一天 (今天 86.20)
+    df_train = df.dropna(subset=['Target']).copy()
+    df_all = df.copy()
 
-    # Scaler 只用訓練集來 fit，測試集只能 transform
+    print(f"[DEBUG] df_all 最後一天: {df_all.index[-1].date() if hasattr(df_all.index[-1], 'date') else df_all.index[-1]} Close={df_all['Close'].iloc[-1]:.2f}")
+    print(f"[DEBUG] df_train 最後一天: {df_train.index[-1].date() if hasattr(df_train.index[-1], 'date') else df_train.index[-1]} Close={df_train['Close'].iloc[-1]:.2f}")
+
+    # ★ 切訓練 / 測試，要用 df_train，不是 df_all
+    split_index = int(len(df_train) * 0.85)
+    train_df = df_train.iloc[:split_index]
+    test_df = df_train.iloc[split_index - SEQ_LEN:]
+
+    # Scaler 只用訓練集來 fit
     scaler = MinMaxScaler()
     scaler.fit(train_df[feature_cols].values)
-
-    # 轉換
     train_features = scaler.transform(train_df[feature_cols].values)
     test_features = scaler.transform(test_df[feature_cols].values)
 
-    # 目標：明天漲跌幅
     train_target = train_df['Target'].values
     test_target = test_df['Target'].values
 
     X_train, y_train = _create_dataset(train_features, train_target)
     X_test, y_test = _create_dataset(test_features, test_target)
 
-    # 實際價格，用來算 MAPE 和方向
-    # test_df 的 Close，要對齊 X_test
-    test_close = test_df['Close'].values[SEQ_LEN:]
-    # y_test 是漲跌幅，實際明天價格 = 今天價格 * (1 + 漲跌幅)
-    # 這裡我們用 test_close 的前一天，來還原
-    # 簡單版：y_true_price = test_close[1:]，因為 test_close 已經是明天了
-    # 為了不搞混，我們直接用 test_df 的 Close 來算
-    y_true_price = test_df['Close'].values[SEQ_LEN:]
-
     model_path = os.path.join(MODEL_DIR, f"{symbol}.h5")
     scaler_path = os.path.join(MODEL_DIR, f"{symbol}_scaler.pkl")
     version_path = os.path.join(MODEL_DIR, f"{symbol}_version.txt")
 
-    # ★ 檢查版本，如果版本不對，或是沒有版本檔，就是舊模型，直接刪掉重訓
+    # ★ 檢查版本，舊模型自動作廢
     need_retrain = True
     if os.path.exists(model_path) and os.path.exists(scaler_path) and os.path.exists(version_path):
         try:
@@ -168,27 +155,21 @@ def predict_stock_price(df, symbol):
         model.fit(X_train, y_train, epochs=100, batch_size=32, validation_split=0.1, callbacks=[early_stop], verbose=0)
         model.save(model_path)
         joblib.dump(scaler, scaler_path)
-        # ★ 存版本檔
         with open(version_path, 'w') as f:
             f.write(MODEL_VERSION)
         _MODEL_CACHE[symbol] = model
         _SCALER_CACHE[symbol] = scaler
         print(f"[INFO] {symbol} 模型已儲存")
 
-    # 預測漲跌幅
+    # 預測漲跌幅 (測試集)
     y_pred_return = model.predict(X_test, verbose=0).flatten()
-    y_pred_return = np.clip(y_pred_return, -0.1, 0.1)  # 台股漲跌停 10%，超過就砍掉，不讓它亂猜 20%
+    y_pred_return = np.clip(y_pred_return, -0.1, 0.1)
 
-    # 還原成價格：明天價格 = 今天價格 * (1 + 漲跌幅)
-    # 今天價格是 test_close 的前一天
-    # 為了簡單，我們用 y_true_price 的前一天當今天
-    # test_close 是 [今天, 明天, ...]，所以要往前推
-    # 這裡用 test_df 的 Close 來對齊
-    today_close = test_df['Close'].values[SEQ_LEN - 1:-1]  # 今天
+    # 還原成價格
+    today_close = test_df['Close'].values[SEQ_LEN - 1:-1]
     y_pred_price = today_close * (1 + y_pred_return)
-    y_true_price_aligned = test_df['Close'].values[SEQ_LEN:]  # 明天實際
+    y_true_price_aligned = test_df['Close'].values[SEQ_LEN:]
 
-    # 確保長度一樣
     min_len = min(len(y_pred_price), len(y_true_price_aligned))
     y_pred_price = y_pred_price[:min_len]
     y_true_price_aligned = y_true_price_aligned[:min_len]
@@ -197,45 +178,39 @@ def predict_stock_price(df, symbol):
 
     # MAPE
     mape = mean_absolute_percentage_error(y_true_price_aligned, y_pred_price)
-
-    # ★ 天真預測：猜明天 = 今天，拿來比較
     naive_pred_price = today_close[:min_len]
     naive_mape = mean_absolute_percentage_error(y_true_price_aligned, naive_pred_price)
 
-    # ★ 方向準確率：猜對漲或跌的機率，這個比 MAPE 更重要
-    # 實際漲跌：明天 > 今天 = 漲
+    # 方向準確率
     true_direction = (y_true_price_aligned > today_close[:min_len]).astype(int)
     pred_direction = (y_pred_price > today_close[:min_len]).astype(int)
     direction_acc = (true_direction == pred_direction).mean()
 
     print(f"[INFO] {symbol} 模型 MAPE: {mape:.2%}, 天真 MAPE: {naive_mape:.2%}, 方向準確率: {direction_acc:.2%}")
 
-        # 明天預測：用最近 60 天
-    last_60 = scaler.transform(df[feature_cols].values[-SEQ_LEN:])
+    # ★ 明天預測：要用 df_all 的最後 60 天，包含今天 86.20
+    # 不能用 df_train 的最後 60 天，那會是昨天 95.70
+    last_60 = scaler.transform(df_all[feature_cols].values[-SEQ_LEN:])
     last_input = last_60.reshape(1, SEQ_LEN, len(feature_cols))
     predicted_return = float(model.predict(last_input, verbose=0)[0][0])
 
-    # ★ 第一道保險：漲跌幅限制在 -10% 到 +10%
-    # 如果模型輸出是 0.147，或是 98.88 這種離譜的數字，直接砍掉
-    # 如果它輸出的是價格 (例如 98)，那它一定 > 0.1，就會被砍成 0.1
-    # 這樣就不會再出現 14.7% 這種事
     if abs(predicted_return) > 1.0:
         print(f"[WARN] {symbol} 模型輸出異常 {predicted_return}，可能是舊模型，已強制歸零")
         predicted_return = 0.0
 
     predicted_return = float(np.clip(predicted_return, -0.1, 0.1))
-    last_price = float(df['Close'].iloc[-1])
 
-    # ★ 第二道保險：價格也砍一次，保證在漲跌停內
+    # ★ 這裡的 last_price 現在是今天的 86.20，不是昨天的 95.70
+    last_price = float(df_all['Close'].iloc[-1])
     predicted_close = last_price * (1 + predicted_return)
     predicted_close = float(np.clip(predicted_close, last_price * 0.9, last_price * 1.1))
 
     print(f"[INFO] {symbol} 目前 {last_price:.2f}，預測漲跌幅 {predicted_return:.2%}，預測價 {predicted_close:.2f}，漲停 {last_price*1.1:.2f}，跌停 {last_price*0.9:.2f}")
 
-    # 回傳：預測價格、MAPE、實際、預測、還有方向準確率和天真 MAPE
     return [predicted_close], mape, y_true_price_aligned, y_pred_price, {
         'direction_acc': float(direction_acc),
         'naive_mape': float(naive_mape),
         'predicted_return': predicted_return,
         'is_better_than_naive': bool(mape < naive_mape),
+        'last_price': last_price,
     }

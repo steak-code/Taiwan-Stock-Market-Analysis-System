@@ -1,7 +1,10 @@
 from flask import Flask, render_template, request, session
 from stock_analysis import analyze_stock
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 只顯示錯誤，隱藏 WARNING
 import re
+import warnings
+warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 # 這個 key 是用來記你的查詢歷史，之後上線要換一個隨機的，不要用這個
@@ -80,4 +83,5 @@ def index():
     return render_template('index.html', popular=POPULAR_STOCKS, history=history)
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=DEBUG_MODE)
+    # ★ 加 use_reloader=False，不然會訓練兩次
+    app.run(host='127.0.0.1', port=5000, debug=DEBUG_MODE, use_reloader=False)

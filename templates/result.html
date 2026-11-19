@@ -105,10 +105,12 @@
             <div class="forecast-card">
                 <div class="kpi-label">🔮 明天預測價格</div>
                 <div class="kpi-value">{{ "%.2f"|format(extra.predicted_price) if extra and extra.predicted_price is not none else "—" }} <span class="fs-6">元</span></div>
-                {% if extra and extra.predicted_price is not none and extra.current_price is not none %}
-                    {% set diff = extra.predicted_price - extra.current_price %}
-                    {% if diff >= 0 %}<span class="pill pill-up">▲ 預測漲 {{ "%.2f"|format(diff) }} 元</span>
-                    {% else %}<span class="pill pill-down">▼ 預測跌 {{ "%.2f"|format(diff|abs) }} 元</span>{% endif %}
+                {% if extra and extra.predicted_return is not none %}
+                    {% if extra.predicted_return >= 0 %}
+                        <span class="pill pill-up">▲ 預測漲 {{ "%.2f"|format(extra.predicted_return * 100) }}%（{{ "%.2f"|format(extra.current_price * extra.predicted_return) }} 元）</span>
+                    {% else %}
+                        <span class="pill pill-down">▼ 預測跌 {{ "%.2f"|format((extra.predicted_return * 100)|abs) }}%（{{ "%.2f"|format((extra.current_price * extra.predicted_return)|abs) }} 元）</span>
+                    {% endif %}
                 {% endif %}
                 <!-- ★ 新增：顯示漲跌停，讓使用者一眼就知道預測合不合理 -->
                 {% if extra and extra.limit_up is not none %}
