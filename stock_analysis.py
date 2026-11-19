@@ -9,6 +9,8 @@ import ta
 import pandas as pd
 from functools import lru_cache
 from model import predict_stock_price
+import logging
+logging.getLogger('yfinance').setLevel(logging.ERROR)
 
 CHART_DIR = os.path.join('static', 'charts')
 os.makedirs(CHART_DIR, exist_ok=True)
@@ -37,16 +39,34 @@ def _fetch_history_cached(full_symbol):
     return stock, df
 
 def fetch_valid_stock(symbol):
+    last_error = None
     for suffix in ['.TW', '.TWO']:
         full_symbol = symbol + suffix
         try:
             stock, df = _fetch_history_cached(full_symbol)
-            if df is not None and not df.empty:
-                return full_symbol, stock, df
+
+            # ★ 關鍵：資料太少就不算成功，繼續試下一個
+            if df is None or df.empty or len(df) < 100:
+                continue
+
+            # ★ 最後一天收盤價不能是 0 或 NaN
+            last_close = df['Close'].iloc[-1]
+            if last_close is None or pd.isna(last_close) or float(last_close) <= 0:
+                continue
+
+            # 成功了，才回傳，不要印任何 WARNING
+            # print(f"[INFO] 找到 {full_symbol}，共 {len(df)} 筆")
+            return full_symbol, stock, df
+
         except Exception as e:
-            print(f"[WARN] 抓 {full_symbol} 失敗: {e}")
+            # ★ 先不要印，把錯誤存起來就好
+            # 如果 .TW 失敗，我們還要試 .TWO，不用嚇使用者
+            last_error = e
             continue
-    raise ValueError(f"找不到對應的台股代碼 {symbol}")
+
+    # ★ 兩個都失敗，才真的印一次
+    print(f"[WARN] 抓 {symbol} 失敗，.TW 和 .TWO 都查不到：{last_error}")
+    raise ValueError(f"找不到對應的台股代碼 {symbol}，請確認代碼是否正確")
 
 def _draw_charts(symbol, df, predicted_close, y_true, y_pred):
     plt.rcParams['font.family'] = 'Microsoft JhengHei'
