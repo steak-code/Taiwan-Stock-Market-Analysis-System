@@ -23,14 +23,13 @@ def index():
             return render_template('index.html', error="請輸入正確的台股代碼，例如：2330 台積電")
 
         try:
-            chart_path, recent_text, forecast_text = analyze_stock(symbol)
-            return render_template(
-                'result.html',
-                symbol=symbol,
-                chart_path=chart_path,
-                recent_text=recent_text,
-                forecast_text=forecast_text
-            )
+            chart_path, backtest_path, recent_text, forecast_text = analyze_stock(symbol)
+            return render_template('result.html', symbol=symbol,
+                        chart_path=chart_path,
+                        backtest_path=backtest_path,
+                        recent_text=recent_text,
+                        forecast_text=forecast_text)
+            
         except FileNotFoundError:
             # 模型不見了，給使用者看簡單的，給你自己看詳細的
             print(f"[ERROR] 模型檔案找不到，symbol={symbol}")

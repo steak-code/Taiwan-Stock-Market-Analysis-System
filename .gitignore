@@ -17,4 +17,6 @@ static/backtest.png
 
 # 模型檔如果很大，也不要推
 *.pkl
-*.h5
+*.h5models/
+static/charts/
+models/

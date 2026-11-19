@@ -63,52 +63,45 @@ def fetch_valid_stock(symbol):
             continue
     raise ValueError(f"找不到對應的台股代碼 {symbol}（可能為下市或無資料）")
 
-def _draw_chart(symbol, df, predicted_prices):
-    """每次產生一張新的圖，檔名帶時間，不會被蓋掉"""
-    plt.rcParams['font.family'] = 'Microsoft JhengHei'  # 讓中文不會變成方塊
+def _draw_charts(symbol, df, predicted_close, y_true, y_pred):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    plt.rcParams['font.family'] = 'Microsoft JhengHei'
     plt.rcParams['axes.unicode_minus'] = False
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(df.index[-60:], df['Close'].iloc[-60:], label='收盤價', color='#2563eb', linewidth=1.5)
-    if 'MA20' in df.columns:
-        ax.plot(df.index[-60:], df['MA20'].iloc[-60:], label='MA20', color='#f59e0b', linewidth=1.2)
-
-    # 最後一個點是今天，最後再加一個預測的點
-    last_date = df.index[-1]
-    next_date = last_date + __import__('pandas').Timedelta(days=1)
-    ax.scatter([next_date], [predicted_prices[0]], color='#ef4444', s=60, label=f"明天預測: {predicted_prices[0]:.2f}", zorder=5)
-
-    ax.set_title(f"{symbol} 近 60 天走勢 + 明天預測")
-    ax.set_xlabel("日期")
-    ax.set_ylabel("價格 (元)")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.autofmt_xdate()
-    fig.tight_layout()
-
-    # 檔名：2330_20261119_173000.png，每次都不一樣，不會互相蓋掉
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{symbol}_{timestamp}.png"
-    filepath = os.path.join(CHART_DIR, filename)
-    fig.savefig(filepath, dpi=120)
-    plt.close(fig)
 
-    # 回傳給前端的路徑，要用 /，不要用 \
-    return f"static/charts/{filename}"
+    # 主圖
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df.index[-60:], df['Close'].iloc[-60:], label='收盤價')
+    ax.plot(df.index[-60:], df['MA20'].iloc[-60:], label='MA20')
+    next_day = df.index[-1] + pd.Timedelta(days=1)
+    ax.scatter([next_day], [predicted_close], color='red', s=80, label=f"明天預測: {predicted_close:.2f}")
+    ax.set_title(f"{symbol} 近 60 天走勢")
+    ax.legend(); ax.grid(alpha=0.3); fig.autofmt_xdate(); fig.tight_layout()
+    chart_name = f"{symbol}_{timestamp}.png"
+    chart_path = os.path.join(CHART_DIR, chart_name)
+    fig.savefig(chart_path, dpi=120); plt.close(fig)
+
+    # 回測圖
+    fig2, ax2 = plt.subplots(figsize=(10, 4))
+    ax2.plot(y_true, label='實際價格', color='blue')
+    ax2.plot(y_pred, label='模型預測', color='red')
+    ax2.set_title(f"{symbol} 回測預測 vs 實際 (最近 {len(y_true)} 天)")  # 這裡補上 f
+    ax2.legend(); ax2.grid(alpha=0.3); fig2.tight_layout()
+    backtest_name = f"{symbol}_{timestamp}_backtest.png"
+    backtest_path = os.path.join(CHART_DIR, backtest_name)
+    fig2.savefig(backtest_path, dpi=120); plt.close(fig2)
+
+    return f"static/charts/{chart_name}", f"static/charts/{backtest_name}"
 
 def analyze_stock(symbol):
     full_symbol, stock, df = fetch_valid_stock(symbol)
-
-    # 複製一份，不要直接改到快取裡面的 df，不然下次查會越查越少
     df = df.copy()
-
-    # 技術分析
     df['MA20'] = df['Close'].rolling(20).mean()
     df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
     df['MACD'] = ta.trend.MACD(df['Close']).macd()
     df['Returns'] = df['Close'].pct_change()
-
-    # 只算 RSI/MACD 有值的地方，不要用 dropna 把整行砍掉
     df_valid = df.dropna(subset=['MA20', 'RSI', 'MACD'])
     if df_valid.empty:
         raise ValueError("資料不足，無法計算技術指標")
@@ -116,19 +109,17 @@ def analyze_stock(symbol):
     recent_return = df_valid['Returns'].tail(7).mean()
     current_price = float(df['Close'].iloc[-1])
 
-    # 模型預測
-    predicted_prices, mape = predict_stock_price(df_valid, symbol)
+    # 現在 model 回傳 4 個：預測、MAPE、真實值、預測值
+    predicted_prices, mape, y_true, y_pred = predict_stock_price(df_valid, symbol)
 
     company_name = _get_company_name(symbol, stock)
-
     recent_text = f"""{company_name} ({symbol})
 💰 目前價格：{current_price:.2f} 元
 📈 近一週平均報酬率：{recent_return:.2%}
 🧪 模型回測誤差（MAPE）：{mape:.2%}"""
-
     forecast_text = f"🔮 明天預測價格：{predicted_prices[0]:.2f} 元"
 
-    # 真正畫圖
-    chart_path = _draw_chart(symbol, df_valid, predicted_prices)
+    # 畫兩張圖，主圖 + 回測圖，都用獨立檔名
+    chart_path, backtest_path = _draw_charts(symbol, df_valid, predicted_prices[0], y_true, y_pred)
 
-    return chart_path, recent_text, forecast_text
+    return chart_path, backtest_path, recent_text, forecast_text
